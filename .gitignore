@@ -1,8 +1,2 @@
-venv/
-__pycache__/
 .env
-*.pyc
-*.pyo
-*.pyd
-*.sqlite3
-.DS_Store
+venv/
