@@ -3,6 +3,7 @@ import pdfplumber
 import os
 from dotenv import load_dotenv
 import requests
+import re
 
 # --- Load environment variables ---
 load_dotenv()
@@ -50,30 +51,37 @@ def parse_analysis_output(text):
     result = {
         "score": "N/A",
         "missing_skills": ["Not specified"],
-        "suggestion": "No suggestion provided"
+        "suggestion": []
     }
 
-    # Try to extract score
-    for word in text.replace(',', ' ').split():
-        if word.isdigit() and 0 <= int(word) <= 100:
-            result["score"] = word
-            break
+    # --- Extract score using regex ---
+    score_match = re.search(r"\b(\d{1,3})\b\s*(?:/100|out of 100)?", text)
+    if score_match:
+        score = int(score_match.group(1))
+        if 0 <= score <= 100:
+            result["score"] = str(score)
 
-    # Try to extract missing skills
-    skill_keywords = ["skill", "missing", "require", "lack"]
+    # --- Extract missing skills ---
+    skill_keywords = ["missing skills", "skills missing", "lacking skills", "required skills", "skill gaps"]
     for line in text.split('\n'):
         if any(keyword in line.lower() for keyword in skill_keywords):
-            skills = line.split(':')[-1].strip()
-            result["missing_skills"] = [s.strip() for s in skills.split(',')[:2]]
+            skills_line = line.split(':')[-1].strip()
+            skills = [s.strip(" .•-") for s in re.split(r",|and", skills_line)]
+            result["missing_skills"] = skills[:3]
             break
 
-    # Try to extract suggestion
-    suggestion_keywords = ["suggest", "recommend", "advice", "improve"]
+    # --- Extract multiple suggestions ---
+    suggestion_section = False
+    suggestions = []
     for line in text.split('\n'):
-        if any(keyword in line.lower() for keyword in suggestion_keywords):
-            result["suggestion"] = line.split(':')[-1].strip().split('.')[0]
+        if any(k in line.lower() for k in ["suggestion", "recommend", "advice", "improvement"]):
+            suggestion_section = True
+        elif suggestion_section and (line.strip().startswith("-") or line.strip().startswith("•")):
+            suggestions.append(line.strip("-• ").split('.')[0])
+        elif suggestion_section and not line.strip():
             break
 
+    result["suggestion"] = suggestions[:5] if suggestions else ["No suggestions found."]
     return result
 
 # --- Use GPT-3.5 via OpenRouter ---
@@ -100,7 +108,7 @@ Resume:
 Now analyze:
 - Give a score out of 100 for compatibility.
 - List two missing skills (comma-separated).
-- Suggest one short improvement.
+- Suggest five improvements as a bullet list.
 """
 
     data = {
@@ -167,8 +175,13 @@ def main():
                 for skill in result.get("missing_skills", []):
                     st.write(f"- {skill}")
             with col2:
-                st.write("**Improvement Suggestion:**")
-                st.info(result.get("suggestion", "None"))
+                st.write("**Improvement Suggestions:**")
+                suggestions = result.get("suggestion", [])
+                if isinstance(suggestions, list):
+                    for s in suggestions:
+                        st.write(f"- {s}")
+                else:
+                    st.info(suggestions)
                 with st.expander("📟 View Processed Resume Text"):
                     st.text(st.session_state.resume_text[:700] + "...")
 
